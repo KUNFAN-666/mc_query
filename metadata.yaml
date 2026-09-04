@@ -2,6 +2,6 @@
 # 指令: /mcadd <名称> <域名> [介绍]  /mc [域名]
 name: mc_query
 desc: MC 服务器查询 - /mc 显示 logo/在线/ping/版本/MOTD 并渲染图片
-version: 1.2.0
+version: 1.2.1
 author: KUNFAN-666
-repo: https://github.com/KUNFAN-666/astrbot_plugin_mc_query
+repo: https://github.com/KUNFAN-666/mc_query

@@ -938,7 +938,7 @@ def _is_domain(text: str) -> bool:
 
 
 # ============ 插件 ============
-@register("mc_query", "KUNFAN-666", "MC 服务器查询 - /mc 显示信息并渲染图片", "1.2.0")
+@register("mc_query", "KUNFAN-666", "MC 服务器查询 - /mc 显示信息并渲染图片", "1.2.1")
 class MCQueryPlugin(Star):
     def __init__(self, context: Context, config: dict | None = None):
         super().__init__(context)
