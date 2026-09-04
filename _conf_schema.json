@@ -7,6 +7,7 @@
   "show_ping": { "type": "bool", "description": "是否显示 Ping(毫秒)。", "default": true },
   "show_online": { "type": "bool", "description": "是否显示在线人数。", "default": true },
   "show_version": { "type": "bool", "description": "是否显示版本(和核心)。", "default": true },
+  "show_edition": { "type": "bool", "description": "是否显示 Java版/基岩版 标识。", "default": true },
   "render_as_image": { "type": "bool", "description": "是否渲染成图片(false 则以文本发送)。", "default": true },
   "query_timeout": { "type": "int", "description": "单次查询超时时间(秒, 建议 6~12)。", "default": 8 },
   "mc_query_retry": { "type": "int", "description": "查询失败后额外重试次数(0 表示不重试)。", "default": 2 },

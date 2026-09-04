@@ -130,7 +130,7 @@ def _mc_segments(motd: str, default):
                 cur = ""
                 i += 2
                 continue
-            if code == "x" and i + 13 <= len(motd):  # §xRRGGBB hex
+            if code == "x" and i + 8 <= len(motd):  # §xRRGGBB hex(共8字符)
                 try:
                     rgb = tuple(int(motd[i + 2 + j:i + 4 + j], 16) for j in range(0, 6, 2))
                     if cur:
@@ -162,6 +162,46 @@ def _draw_mc_center(d, cx, y, text, font, default):
             x += d.textlength(t, font=font)
 
 
+def _last_color_prefix(s):
+    """取字符串中最后一个 § 颜色码(§c 或 §xRRGGBB), 用于换行后延续颜色。"""
+    codes = re.findall(r"§x[0-9a-fA-F]{6}|§[0-9a-fk-or]", s or "")
+    return codes[-1] if codes else ""
+
+
+def _wrap_mc(text, font, max_w):
+    """按可见宽度换行(保留 § 码与换行颜色延续), 返回 \\n 连接的字符串。"""
+    if not text:
+        return ""
+    out_lines = []
+    for raw in (text or "").split("\n"):
+        cur = ""          # 当前行原始内容(含 §)
+        cur_vis = ""      # 当前行可见字符
+        j = 0
+        n = len(raw)
+        while j < n:
+            ch = raw[j]
+            if ch == "§" and j + 1 < n:
+                code = raw[j + 1]
+                if code.lower() == "x" and j + 8 <= n:
+                    cur += raw[j:j + 8]
+                    j += 8
+                    continue
+                cur += raw[j:j + 2]
+                j += 2
+                continue
+            # 可见字符
+            if cur_vis and font.getlength(cur_vis + ch) > max_w:
+                out_lines.append(cur)
+                cur = _last_color_prefix(cur)   # 换行延续颜色
+                cur_vis = ""
+            cur += ch
+            cur_vis += ch
+            j += 1
+        if cur:
+            out_lines.append(cur)
+    return "\n".join(out_lines)
+
+
 def _ping_color(ping_ms):
     p = int(round(ping_ms))
     if p < 40:
@@ -180,7 +220,7 @@ def _sanitize(t):
 
 
 def render_card(name, version, motd, online, ping_ms, domain="", logo_bytes=None,
-                intro=None, online_mode="", core="", cfg=None):
+                intro=None, online_mode="", core="", edition="", cfg=None):
     """渲染 MC 服务器信息卡。背景 book.png, 尺寸 730x900, MOTD 彩色。cfg 控制显示项。"""
     cfg = cfg or {}
     def g(key, default):
@@ -198,13 +238,22 @@ def render_card(name, version, motd, online, ping_ms, domain="", logo_bytes=None
     cx = W // 2
 
     # logo(可开关): 放在书页上, 避开上下封边框, 像记录在书上
-    if g("show_logo", True) and logo_bytes:
-        try:
-            logo = Image.open(io.BytesIO(logo_bytes)).convert("RGBA")
-            logo = logo.resize((320, 320), Image.NEAREST)
-            img.paste(logo, (cx - 160, 85), logo)
-        except Exception:
-            pass
+    if g("show_logo", True):
+        logo_src = logo_bytes
+        if not logo_src and "基岩" in (edition or ""):
+            # 基岩版协议不带 favicon, 用插件内置 logo.png 兜底
+            try:
+                with open(os.path.join(_PLUGIN_DIR, "logo.png"), "rb") as f:
+                    logo_src = f.read()
+            except Exception:
+                logo_src = None
+        if logo_src:
+            try:
+                logo = Image.open(io.BytesIO(logo_src)).convert("RGBA")
+                logo = logo.resize((260, 260), Image.NEAREST)
+                img.paste(logo, (cx - 130, 75), logo)
+            except Exception:
+                pass
 
     name_font = _load_font(42)
     ver_font = _load_font(28)
@@ -212,24 +261,31 @@ def render_card(name, version, motd, online, ping_ms, domain="", logo_bytes=None
     small_font = _load_font(24)
 
     # 文字全部放在 logo 下方, 依显示项动态往下排(都控制在书页内)
-    y = 430
+    y = 365
     _name = _sanitize(name)[:30]
     _domain = _sanitize(domain)[:44]
     _motd = _sanitize(motd)
     _vers = _sanitize(version)[:46]
     if g("show_name", True):
         d.text((cx, y), _name, font=name_font, fill=TEXT, anchor="mm")
-        y += 86
+        y += 80
     if g("show_domain", True) and _domain:
         d.text((cx, y), _domain, font=small_font, fill=ACCENT, anchor="mm")
-        y += 44
+        y += 40
     if g("show_online_mode", True) and online_mode:
         om_color = (0, 120, 0) if online_mode == "正版" else (170, 90, 20)
         d.text((cx, y), online_mode, font=small_font, fill=om_color, anchor="mm")
-        y += 44
+        y += 40
     if g("show_motd", True) and _motd:
-        _draw_mc_center(d, cx, y + 12, _motd, motd_font, TEXT)
-        y += 76
+        wrapped = _wrap_mc(_motd, motd_font, 540)
+        wlines = wrapped.split("\n")
+        if len(wlines) > 3:          # 最多 3 行, 超出截断
+            wrapped = "\n".join(wlines[:3]) + "…"
+            nlines = 3
+        else:
+            nlines = len(wlines)
+        _draw_mc_center(d, cx, y + 12, wrapped, motd_font, TEXT)
+        y += 12 + 34 * nlines + 4
     # Ping / 在线(分段上色, 整体居中)
     show_ping = g("show_ping", True)
     show_online = g("show_online", True)
@@ -252,6 +308,11 @@ def render_card(name, version, motd, online, ping_ms, domain="", logo_bytes=None
         ver_line = f"版本: {_vers}{core_str}"
         d.text((cx, y + 18), ver_line, font=ver_font, fill=ACCENT, anchor="mm")
         y += 46
+    # Java版/基岩版(自动检测), 显示在版本下方
+    if g("show_edition", True) and edition:
+        ed_color = (60, 90, 160) if "基岩" in edition else (0, 120, 0)
+        d.text((cx, y + 16), edition, font=small_font, fill=ed_color, anchor="mm")
+        y += 44
 
     return img
 
@@ -280,6 +341,8 @@ def build_text(info, name, domain, intro, cfg=None):
     if g("show_version", True):
         core = info.get("core") or ""
         lines.append(f"版本: {_sanitize(info.get('version', ''))}{('(' + core + ')') if core else ''}")
+    if g("show_edition", True) and info.get("edition"):
+        lines.append(f"版本类型: {info['edition']}")
     if intro:
         lines.append(f"介绍: {_sanitize(intro)}")
     return "\n".join(lines)
@@ -330,6 +393,74 @@ def _read_varint(data: bytes, pos: int):
             raise ValueError("varint too long")
 
 
+def _connect(host: str, port: int, timeout: float):
+    """建立 TCP 连接。DNS 解析失败(gaierror)时重试几次, 应对瞬时 DNS 抖动。"""
+    import socket
+    import time as _time
+    last = None
+    for _ in range(3):
+        try:
+            return socket.create_connection((host, port), timeout=timeout)
+        except socket.gaierror as e:
+            last = e
+            _time.sleep(0.4)
+        # 非 DNS 错误(超时/拒绝等)不重试, 直接抛出
+    raise last if last else OSError(f"DNS 解析失败: {host}")
+
+
+def _srv_lookup(host: str, timeout: float = 2.0):
+    """查询 Minecraft 服务的 SRV 记录 `_minecraft._tcp.<host>`, 返回 (target_host, port) 或 None。
+
+    依次尝试: 系统 DNS → 国内公共 DNS(阿里/腾讯) → 国外公共 DNS, 兼容不同网络环境。
+    """
+    try:
+        import dns.message
+        import dns.query
+        import dns.rdatatype
+        import dns.name
+    except Exception:
+        return None
+    try:
+        qname = dns.name.from_text("_minecraft._tcp." + host + ".")
+        q = dns.message.make_query(qname, dns.rdatatype.SRV)
+    except Exception:
+        return None
+    servers = []
+    try:
+        import dns.resolver
+        servers += list(dns.resolver.get_default_resolver().nameservers)
+    except Exception:
+        pass
+    servers += ["223.5.5.5", "119.29.29.29", "1.1.1.1", "8.8.8.8"]
+    for s in dict.fromkeys(servers):
+        try:
+            resp = dns.query.udp(q, s, timeout=timeout)
+        except Exception:
+            continue
+        try:
+            for rr in resp.answer:
+                for item in rr:
+                    target = str(item.target).rstrip(".")
+                    return (target, int(item.port))
+        except Exception:
+            continue
+    return None
+
+
+def _try_srv(host: str, port: int):
+    """主机名无法直接解析时, 用 SRV 记录替换 host/port。返回 (host, port)。"""
+    import socket
+    try:
+        socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+        return (host, port)          # 能解析, 直接用
+    except Exception:
+        pass
+    srv = _srv_lookup(host)
+    if srv:
+        return srv
+    return (host, port)
+
+
 def _mc_srp_query(host: str, port: int, protocol: int = 47, timeout: float = 6.0):
     """纯 TCP Server List Ping(同步, 需在 executor 中调用)。
 
@@ -338,7 +469,7 @@ def _mc_srp_query(host: str, port: int, protocol: int = 47, timeout: float = 6.0
     """
     import socket
 
-    sock = socket.create_connection((host, port), timeout=timeout)
+    sock = _connect(host, port, timeout)
     try:
         sock.settimeout(timeout)
 
@@ -417,7 +548,7 @@ def _mc_login_probe(host: str, port: int, protocol: int = 765, timeout: float = 
 
     if not protocol:
         protocol = 765
-    sock = socket.create_connection((host, port), timeout=timeout)
+    sock = _connect(host, port, timeout)
     try:
         sock.settimeout(timeout)
 
@@ -465,6 +596,65 @@ def _mc_login_probe(host: str, port: int, protocol: int = 765, timeout: float = 
             sock.close()
         except Exception:
             pass
+
+
+# RakNet Unconnected Ping 的 magic
+_RAKNET_MAGIC = bytes.fromhex("00ffff00fefefefefdfdfdfd12345678")
+
+
+def _bedrock_query(host: str, port: int, timeout: float = 3.0):
+    """用 RakNet Unconnected Ping 探测并解析基岩版(Bedrock)服务器。
+
+    返回 dict(edition/motd/version/online/max), 不是基岩服返回 None。
+    """
+    import socket
+    import struct
+
+    # 先解析 host(带 DNS 重试), 避免 UDP 发送时 getaddrinfo 失败
+    try:
+        ip = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_DGRAM)[0][4][0]
+    except Exception:
+        return None
+    data = b"\x01" + b"\x00" * 8 + _RAKNET_MAGIC   # Unconnected Ping
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.settimeout(timeout)
+    try:
+        import time as _time
+        t0 = _time.perf_counter()
+        s.sendto(data, (ip, port))
+        resp, _ = s.recvfrom(2048)
+        ping_ms = int((_time.perf_counter() - t0) * 1000)
+        if len(resp) < 35 or resp[0] != 0x1C or resp[17:33] != _RAKNET_MAGIC:
+            return None
+        ln = struct.unpack(">H", resp[33:35])[0]
+        name = resp[35:35 + ln].decode("utf-8", "replace")
+        parts = name.split(";")
+        if parts and parts[0].upper() == "MCPE":
+            def _num(idx):
+                if len(parts) <= idx:
+                    return 0
+                m = re.search(r"\d+", parts[idx])
+                try:
+                    return int(m.group(0)) if m else 0
+                except Exception:
+                    return 0
+            return {
+                "edition": "基岩版",
+                "motd": parts[1] if len(parts) > 1 else "",
+                "version": parts[3] if len(parts) > 3 else "",
+                "online": _num(4),
+                "max": _num(5),
+                "protocol": parts[2] if len(parts) > 2 else "",
+                "ping_ms": ping_ms,
+            }
+    except Exception:
+        return None
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
+    return None
 
 
 async def _detect_online_mode(host: str, port: int, protocol, probe_timeout: float = 3.0) -> str:
@@ -531,6 +721,15 @@ async def query_server(domain, timeout: int = 8):
         except ValueError:
             port = 25565
 
+    # 主机名无法直接解析时, 用 Minecraft SRV 记录替换 host/port(如 mc.cneko.org → vat-n66.mutong1.com:21005)
+    loop = asyncio.get_event_loop()
+    try:
+        host, port = await asyncio.wait_for(
+            loop.run_in_executor(None, _try_srv, host, port), timeout=6
+        )
+    except Exception:
+        pass
+
     # ---- 优先 mcstatus ----
     try:
         from mcstatus import JavaServer  # mcstatus 11+
@@ -570,6 +769,7 @@ async def query_server(domain, timeout: int = 8):
                 "logo": logo_bytes,
                 "online_mode": online_mode,
                 "core": core,
+                "edition": "java版",
             }
         except Exception as e:
             logger.error(f"mcstatus 查询 {host}:{port} 失败: {e!r} · 回退 SRP")
@@ -592,6 +792,20 @@ async def query_server(domain, timeout: int = 8):
             break
         srp = None
     if srp is None:
+        # ---- Java 失败, 尝试基岩版(Bedrock) RakNet ping ----
+        try:
+            bd = await asyncio.wait_for(
+                loop.run_in_executor(None, _bedrock_query, host, port),
+                timeout=min(timeout, 6),
+            )
+        except Exception:
+            bd = None
+        if bd and isinstance(bd, dict):
+            bd.setdefault("ping_ms", 0)
+            bd["logo"] = None
+            bd["online_mode"] = ""
+            bd["core"] = ""
+            return bd
         return None
     data, ping_ms = srp
     if not isinstance(data, dict):
@@ -641,6 +855,7 @@ async def query_server(domain, timeout: int = 8):
         "logo": logo_bytes,
         "online_mode": online_mode,
         "core": core,
+        "edition": "java版",
     }
 
 
@@ -676,7 +891,7 @@ def _is_domain(text: str) -> bool:
 
 
 # ============ 插件 ============
-@register("mc_query", "KUNFAN-666", "MC 服务器查询 - /mc 显示信息并渲染图片", "1.0.1")
+@register("mc_query", "KUNFAN-666", "MC 服务器查询 - /mc 显示信息并渲染图片", "1.1.0")
 class MCQueryPlugin(Star):
     def __init__(self, context: Context, config: dict | None = None):
         super().__init__(context)
@@ -814,6 +1029,7 @@ class MCQueryPlugin(Star):
             logo_bytes=info["logo"],
             online_mode=info.get("online_mode", ""),
             core=info.get("core", ""),
+            edition=info.get("edition", ""),
             cfg=self.config,
         )
         path = os.path.join(_DATA_DIR, "mc_query", f"card_{domain.replace('.','_')}.png")
