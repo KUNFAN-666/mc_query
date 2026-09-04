@@ -11,5 +11,5 @@
   "render_as_image": { "type": "bool", "description": "是否渲染成图片(false 则以文本发送)。", "default": true },
   "query_timeout": { "type": "int", "description": "单次查询超时时间(秒, 建议 6~12)。", "default": 8 },
   "mc_query_retry": { "type": "int", "description": "查询失败后额外重试次数(0 表示不重试)。", "default": 2 },
-  "query_failed_text": { "type": "string", "description": "查询失败时回复的文案。", "default": "无法查询到该服务器(可能离线或域名错误)。" }
+  "query_failed_text": { "type": "string", "description": "查询失败时回复的文案。", "default": "无法查询到该服务器，请检查土豆是否发芽" }
 }

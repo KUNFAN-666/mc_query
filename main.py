@@ -162,6 +162,36 @@ def _draw_mc_center(d, cx, y, text, font, default):
             x += d.textlength(t, font=font)
 
 
+def _draw_center_colored(d, cx, vcenter_y, text, font, default):
+    """在 vcenter_y 处垂直居中绘制带 § 颜色码的文本(单行, 自动处理 §x 变色)。"""
+    lh = font.size if hasattr(font, "size") else 30
+    _draw_mc_center(d, cx, vcenter_y - lh / 2, text, font, default)
+
+
+def _truncate_vis(text, max_vis):
+    """按可见字符数截断, 保留 § 颜色码(避免切断 §xRRGGBB)。"""
+    if not text:
+        return ""
+    out = ""
+    vis = 0
+    i, n = 0, len(text)
+    while i < n and vis < max_vis:
+        ch = text[i]
+        if ch == "§" and i + 1 < n:
+            code = text[i + 1]
+            if code.lower() == "x" and i + 8 <= n:
+                out += text[i:i + 8]
+                i += 8
+                continue
+            out += text[i:i + 2]
+            i += 2
+            continue
+        out += ch
+        vis += 1
+        i += 1
+    return out
+
+
 def _last_color_prefix(s):
     """取字符串中最后一个 § 颜色码(§c 或 §xRRGGBB), 用于换行后延续颜色。"""
     codes = re.findall(r"§x[0-9a-fA-F]{6}|§[0-9a-fk-or]", s or "")
@@ -169,13 +199,14 @@ def _last_color_prefix(s):
 
 
 def _wrap_mc(text, font, max_w):
-    """按可见宽度换行(保留 § 码与换行颜色延续), 返回 \\n 连接的字符串。"""
+    """按可见宽度换行(保留 § 码, 换行延续颜色, 尽量在空格处断行), 返回 \\n 连接的字符串。"""
     if not text:
         return ""
     out_lines = []
     for raw in (text or "").split("\n"):
         cur = ""          # 当前行原始内容(含 §)
         cur_vis = ""      # 当前行可见字符
+        last_space = -1   # cur 中上一个空格的索引
         j = 0
         n = len(raw)
         while j < n:
@@ -191,11 +222,22 @@ def _wrap_mc(text, font, max_w):
                 continue
             # 可见字符
             if cur_vis and font.getlength(cur_vis + ch) > max_w:
-                out_lines.append(cur)
-                cur = _last_color_prefix(cur)   # 换行延续颜色
-                cur_vis = ""
+                if last_space > 0:
+                    head = cur[:last_space]
+                    tail = cur[last_space + 1:]
+                    out_lines.append(head)
+                    cur = _last_color_prefix(head) + tail
+                    cur_vis = _strip_color(tail)
+                    last_space = cur.rfind(" ")
+                else:
+                    out_lines.append(cur)
+                    cur = _last_color_prefix(cur)
+                    cur_vis = ""
+                    last_space = -1
             cur += ch
             cur_vis += ch
+            if ch == " ":
+                last_space = len(cur) - 1
             j += 1
         if cur:
             out_lines.append(cur)
@@ -217,6 +259,29 @@ def _sanitize(t):
         ch for ch in (t or "")
         if ch in "\n\t" or (ord(ch) >= 32 and ch != "\ufffd")
     )
+
+
+def _strip_color(s):
+    """去掉 § 颜色/格式码, 只留可见文本(文本模式用)。"""
+    s = _sanitize(s)
+    s = re.sub(r"§x[0-9a-fA-F]{6}", "", s)   # §xRRGGBB
+    s = re.sub(r"§.", "", s)                  # 其余 § 码 + 1 字符
+    return s
+
+
+def _desc_text(desc):
+    """把服务器 description 转成纯文本(带 § 码), 兼容 str/dict/list 文本组件。"""
+    if isinstance(desc, str):
+        return desc
+    if isinstance(desc, list):
+        return "".join(_desc_text(n) for n in desc)
+    if isinstance(desc, dict):
+        text = str(desc.get("text", ""))
+        extra = desc.get("extra")
+        if extra is not None:
+            text += _desc_text(extra)
+        return text
+    return str(desc or "")
 
 
 def render_card(name, version, motd, online, ping_ms, domain="", logo_bytes=None,
@@ -262,15 +327,15 @@ def render_card(name, version, motd, online, ping_ms, domain="", logo_bytes=None
 
     # 文字全部放在 logo 下方, 依显示项动态往下排(都控制在书页内)
     y = 365
-    _name = _sanitize(name)[:30]
-    _domain = _sanitize(domain)[:44]
+    _name = _truncate_vis(_sanitize(name), 30)
+    _domain = _truncate_vis(_sanitize(domain), 44)
     _motd = _sanitize(motd)
-    _vers = _sanitize(version)[:46]
-    if g("show_name", True):
-        d.text((cx, y), _name, font=name_font, fill=TEXT, anchor="mm")
+    _vers = _truncate_vis(_sanitize(version), 46)
+    if g("show_name", True) and _name:
+        _draw_center_colored(d, cx, y, _name, name_font, TEXT)
         y += 80
     if g("show_domain", True) and _domain:
-        d.text((cx, y), _domain, font=small_font, fill=ACCENT, anchor="mm")
+        _draw_center_colored(d, cx, y, _domain, small_font, ACCENT)
         y += 40
     if g("show_online_mode", True) and online_mode:
         om_color = (0, 120, 0) if online_mode == "正版" else (170, 90, 20)
@@ -279,8 +344,8 @@ def render_card(name, version, motd, online, ping_ms, domain="", logo_bytes=None
     if g("show_motd", True) and _motd:
         wrapped = _wrap_mc(_motd, motd_font, 540)
         wlines = wrapped.split("\n")
-        if len(wlines) > 3:          # 最多 3 行, 超出截断
-            wrapped = "\n".join(wlines[:3]) + "…"
+        if len(wlines) > 3:          # 最多 3 行, 超出截断(延续最后颜色)
+            wrapped = "\n".join(wlines[:3]) + _last_color_prefix(wlines[2]) + "…"
             nlines = 3
         else:
             nlines = len(wlines)
@@ -305,8 +370,8 @@ def render_card(name, version, motd, online, ping_ms, domain="", logo_bytes=None
         y += 60
     if g("show_version", True):
         core_str = f"({core})" if core else ""
-        ver_line = f"版本: {_vers}{core_str}"
-        d.text((cx, y + 18), ver_line, font=ver_font, fill=ACCENT, anchor="mm")
+        ver_line = f"版本: {_vers}§r{core_str}"
+        _draw_center_colored(d, cx, y + 18, ver_line, ver_font, ACCENT)
         y += 46
     # Java版/基岩版(自动检测), 显示在版本下方
     if g("show_edition", True) and edition:
@@ -326,25 +391,24 @@ def build_text(info, name, domain, intro, cfg=None):
 
     lines = []
     if g("show_name", True):
-        lines.append(f"名称: {_sanitize(name)}")
+        lines.append(f"名称: {_strip_color(name)}")
     if g("show_domain", True) and domain:
-        lines.append(f"域名: {_sanitize(domain)}")
+        lines.append(f"域名: {_strip_color(domain)}")
     if g("show_online_mode", True) and info.get("online_mode"):
         lines.append(f"在线模式: {info['online_mode']}")
     if g("show_motd", True) and info.get("motd"):
-        motd = _sanitize(info["motd"]).replace("§", "")
-        lines.append(f"MOTD: {motd}")
+        lines.append(f"MOTD: {_strip_color(info['motd'])}")
     if g("show_ping", True) or g("show_online", True):
         p = [f"Ping: {info.get('ping_ms', 0)}ms"] if g("show_ping", True) else []
         o = [f"在线: {info.get('online', 0)} 人"] if g("show_online", True) else []
         lines.append(" · ".join(p + o))
     if g("show_version", True):
         core = info.get("core") or ""
-        lines.append(f"版本: {_sanitize(info.get('version', ''))}{('(' + core + ')') if core else ''}")
+        lines.append(f"版本: {_strip_color(info.get('version', ''))}{('(' + core + ')') if core else ''}")
     if g("show_edition", True) and info.get("edition"):
         lines.append(f"版本类型: {info['edition']}")
     if intro:
-        lines.append(f"介绍: {_sanitize(intro)}")
+        lines.append(f"介绍: {_strip_color(intro)}")
     return "\n".join(lines)
 
 
@@ -355,7 +419,7 @@ def render_intro(intro):
     img = Image.new("RGB", (W, H), (245, 235, 215))
     d = ImageDraw.Draw(img)
     font = _load_font(26)
-    lines = _wrap(intro, 26)
+    lines = _wrap(_strip_color(intro), 26)
     y = 60
     for line in lines:
         if y > H - 40:
@@ -720,6 +784,8 @@ async def query_server(domain, timeout: int = 8):
             port = int(port_s)
         except ValueError:
             port = 25565
+    if not (1 <= port <= 65535):
+        port = 25565   # 防端口越界导致 to_bytes 溢出
 
     # 主机名无法直接解析时, 用 Minecraft SRV 记录替换 host/port(如 mc.cneko.org → vat-n66.mutong1.com:21005)
     loop = asyncio.get_event_loop()
@@ -750,7 +816,7 @@ async def query_server(domain, timeout: int = 8):
                     logo_bytes = base64.b64decode(favicon_b64.split(",", 1)[-1])
                 except Exception:
                     logo_bytes = None
-            motd = str(getattr(status, "description", "") or "")
+            motd = _desc_text(getattr(status, "description", "") or "")
             ver_obj = getattr(status, "version", None)
             version = getattr(ver_obj, "name", "") if ver_obj else ""
             protocol = getattr(ver_obj, "protocol", None) if ver_obj else None
@@ -812,26 +878,7 @@ async def query_server(domain, timeout: int = 8):
         return None
 
     desc = data.get("description", {})
-    motd = desc.get("text", "") if isinstance(desc, dict) else str(desc)
-    # 解析 extra 分段(§ 之外), 拼接为纯文本, 段内的 § 仍由 _mc_segments 处理
-    if isinstance(desc, dict):
-        extra = desc.get("extra")
-        if extra:
-            parts = []
-
-            def _collect(node):
-                if isinstance(node, dict):
-                    parts.append(node.get("text", ""))
-                    sub = node.get("extra")
-                    if sub:
-                        for n in sub:
-                            _collect(n)
-                elif isinstance(node, str):
-                    parts.append(node)
-
-            for n in extra:
-                _collect(n)
-            motd = "".join(parts)
+    motd = _desc_text(desc)
 
     ver = data.get("version", {}) or {}
     players = data.get("players", {}) or {}
@@ -891,7 +938,7 @@ def _is_domain(text: str) -> bool:
 
 
 # ============ 插件 ============
-@register("mc_query", "KUNFAN-666", "MC 服务器查询 - /mc 显示信息并渲染图片", "1.1.0")
+@register("mc_query", "KUNFAN-666", "MC 服务器查询 - /mc 显示信息并渲染图片", "1.2.0")
 class MCQueryPlugin(Star):
     def __init__(self, context: Context, config: dict | None = None):
         super().__init__(context)
@@ -959,13 +1006,17 @@ class MCQueryPlugin(Star):
         content = _clean_msg(event.message_str or "")
         m = re.search(r"(?:^|\s)(?:/)?mcadd\b", content, re.I)
         seg = content[m.end():].strip() if m else content.strip()
-        domain = _find_domain(seg)
+        domain = _find_domain(seg) or _find_domain(content)
         if not domain:
             yield event.plain_result("用法: /mcadd <名称> <域名> [介绍]  示例: /mcadd 生存服 mc.example.com")
             return
-        pre = seg.split(domain, 1)[0].strip()
+        if domain in seg:
+            pre = seg.split(domain, 1)[0].strip()
+            intro = seg.split(domain, 1)[1].strip()
+        else:
+            pre = seg.strip()
+            intro = ""
         name = pre.split()[0] if pre.strip() else domain
-        intro = seg.split(domain, 1)[1].strip()
         store = self._store
         domain = domain.strip().lower()
         store["servers"][domain] = {"name": name, "domain": domain, "intro": intro}
@@ -984,7 +1035,7 @@ class MCQueryPlugin(Star):
         content = _clean_msg(event.message_str or "")
         m = re.search(r"(?:^|\s)(?:/)?mc\b", content, re.I)
         seg = content[m.end():].strip() if m else content.strip()
-        domain = _find_domain(seg)
+        domain = _find_domain(seg) or _find_domain(content)
         if not domain:
             domain = self._store["session_default"].get(sid) or self._session_last.get(sid) or ""
             if not domain or not _is_domain(domain):
