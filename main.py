@@ -305,8 +305,8 @@ def render_card(name, version, motd, online, ping_ms, domain="", logo_bytes=None
     # logo(可开关): 放在书页上, 避开上下封边框, 像记录在书上
     if g("show_logo", True):
         logo_src = logo_bytes
-        if not logo_src and "基岩" in (edition or ""):
-            # 基岩版协议不带 favicon, 用插件内置 logo.png 兜底
+        if not logo_src:
+            # 服务器没有 favicon(很多 Java 服也没有, 基岩版协议本来就不带) → 用插件内置 logo.png 兜底
             try:
                 with open(os.path.join(_PLUGIN_DIR, "logo.png"), "rb") as f:
                     logo_src = f.read()
@@ -938,7 +938,7 @@ def _is_domain(text: str) -> bool:
 
 
 # ============ 插件 ============
-@register("mc_query", "KUNFAN-666", "MC 服务器查询 - /mc 显示信息并渲染图片", "1.2.1")
+@register("mc_query", "KUNFAN-666", "MC 服务器查询 - /mc 显示信息并渲染图片", "1.2.2")
 class MCQueryPlugin(Star):
     def __init__(self, context: Context, config: dict | None = None):
         super().__init__(context)
